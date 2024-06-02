@@ -1,0 +1,84 @@
+<?jelly escape-by-default='true'?>
+<!--
+  ~ Copyright (c) Microsoft Corporation. All rights reserved.
+  ~ Licensed under the MIT License. See License.txt in the project root for
+  ~ license information.
+  -->
+<j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:f="/lib/form" xmlns:c="/lib/credentials">
+    <f:entry title="${%kubeconfigId_title}" field="kubeconfigId">
+        <c:select expressionAllowed="false" />
+    </f:entry>
+
+    <f:advanced title="Deprecated Kubeconfig Settings">
+        <f:entry>
+            The following <b>${%credentialsType_title}</b> is left only for backward compatibility with
+            the legacy version, and will be removed completely in future versions. <br />
+            Please use the above Kubeconfig stored in Jenkins system instead.
+        </f:entry>
+
+        <f:entry title="${%credentialsType_title}" field="credentialsType">
+            <f:select/>
+        </f:entry>
+
+        <f:entry>
+            <table style="width:100%" data-field="kubeConfig">
+                <f:property field="kubeConfig">
+                    <st:include page="config.jelly" class="${descriptor.clazz}"/>
+                </f:property>
+            </table>
+
+            <table style="width:100%" data-field="ssh">
+                <f:property field="ssh">
+                    <st:include page="config.jelly" class="${descriptor.clazz}"/>
+                </f:property>
+            </table>
+
+            <table style="width:100%" data-field="textCredentials">
+                <f:property field="textCredentials">
+                    <st:include page="config.jelly" class="${descriptor.clazz}"/>
+                </f:property>
+            </table>
+        </f:entry>
+    </f:advanced>
+
+    <f:entry title="${%configs_title}" field="configs">
+        <f:textbox/>
+    </f:entry>
+
+    <f:entry title="${%enableConfigSubstitution_title}" field="enableConfigSubstitution">
+        <f:checkbox default="${descriptor.defaultEnableConfigSubstitution}"/>
+    </f:entry>
+
+    <f:entry title="${%deleteResource_title}" field="deleteResource">
+        <f:checkbox default="${descriptor.defaultDeleteResource}"/>
+    </f:entry>
+
+    <f:advanced title="${%dockerCredentialsSection_title}">
+        <f:section title="${%dockerCredentialsSection_title}">
+            <f:entry title="${%secretNamespace_title}" field="secretNamespace">
+                <f:textbox default="${descriptor.defaultSecretNamespace}"/>
+            </f:entry>
+            <f:entry title="${%secretName_title}" field="secretName">
+                <f:textbox/>
+            </f:entry>
+            <f:entry title="${%dockerCredentials_title}" field="dockerCredentials">
+                <f:repeatableProperty field="dockerCredentials">
+                    <f:entry title="">
+                        <div align="right">
+                            <f:repeatableDeleteButton/>
+                        </div>
+                    </f:entry>
+                </f:repeatableProperty>
+            </f:entry>
+        </f:section>
+    </f:advanced>
+
+    <f:validateButton title="${%verifyConfiguration}" progress="${%verifying}"
+                      method="verifyConfiguration"
+                      with="kubeconfigId,credentialsType,path,sshServer,sshCredentialsId,serverUrl,certificateAuthorityData,clientCertificateData,clientKeyData,configs"/>
+
+    <st:once>
+        <script type="text/javascript"
+                src="${rootURL}/plugin/kubernetes-cd/scripts/KubenetesDeployContext.js"></script>
+    </st:once>
+</j:jelly>
