@@ -6,6 +6,7 @@
 
 package com.microsoft.jenkins.kubernetes.wrapper;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.microsoft.jenkins.kubernetes.credentials.ResolvedDockerRegistryEndpoint;
 import com.microsoft.jenkins.kubernetes.util.CommonUtils;
 import com.microsoft.jenkins.kubernetes.util.Constants;
@@ -15,7 +16,6 @@ import hudson.FilePath;
 import hudson.util.VariableResolver;
 import io.kubernetes.client.openapi.ApiClient;
 import io.kubernetes.client.openapi.ApiException;
-import io.kubernetes.client.openapi.models.V1Namespace;
 import io.kubernetes.client.openapi.models.V1Secret;
 import io.kubernetes.client.openapi.models.V1SecretBuilder;
 import io.kubernetes.client.util.ClientBuilder;
@@ -43,7 +43,6 @@ import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -188,6 +187,18 @@ public class KubernetesClientWrapper {
                 .build();
     }
 
+    /**
+     * Constructs a wrapper without an underlying {@link ApiClient}.
+     *
+     * <p>Only used by tests that replace {@link #handleResource(Object)} with an in-memory fake,
+     * so no cluster access happens. Production code always goes through one of the other
+     * constructors.</p>
+     */
+    @VisibleForTesting
+    KubernetesClientWrapper() {
+        this.client = null;
+    }
+
     public ApiClient getClient() {
         return client;
     }
@@ -223,11 +234,21 @@ public class KubernetesClientWrapper {
     /**
      * Apply Kubernetes configurations through the given Kubernetes client.
      *
+     * <p>All the configuration files are parsed first and the loaded resources are sorted as a
+     * single list before any of them is handled. This makes dependency ordering work across
+     * files (for example a Namespace declared in a later file is still created before the
+     * workloads of earlier files), and it also means that a YAML syntax error in any file fails
+     * the whole run before any resource is applied or deleted, instead of failing halfway
+     * through. Resources of the same dependency layer keep the relative order in which they
+     * appeared in the input files. In delete mode the layers are traversed in reverse so that
+     * the Namespace is removed last. See {@link ResourceOrdering} for the layer definition.</p>
+     *
      * @param configFiles The configuration files to be deployed
      * @throws IOException          exception on IO
      * @throws InterruptedException interruption happened during blocking IO operations
      */
     public void apply(FilePath[] configFiles) throws IOException, InterruptedException, ApiException {
+        List<Object> allResources = new ArrayList<>();
         for (FilePath path : configFiles) {
             log(Messages.KubernetesClientWrapper_loadingConfiguration(path));
             List<Object> resources;
@@ -241,29 +262,42 @@ public class KubernetesClientWrapper {
                 log(Messages.KubernetesClientWrapper_noResourceLoadedFrom(path));
                 continue;
             }
-
-            // Process the Namespace in the list first, as it may be a dependency of other resources.
-            Iterator<Object> iterator = resources.iterator();
-            while (iterator.hasNext()) {
-                Object resource = iterator.next();
-                if (resource instanceof V1Namespace) {
-                    handleResource(resource);
-                    iterator.remove();
-                }
-            }
-
-            for (Object resource : resources) {
-                handleResource(resource);
-            }
+            allResources.addAll(resources);
         }
+
+        for (Object resource : orderResources(allResources)) {
+            handleResource(resource);
+        }
+    }
+
+    /**
+     * Sorts the loaded resources according to the current mode.
+     *
+     * <p>Package private so that tests can drive it with in-memory resource objects and a fake
+     * {@link #handleResource(Object)} without connecting to a cluster.</p>
+     *
+     * @param resources resources in their original, file based order
+     * @return a new list sorted for apply or, when {@link #isDeleteResource()} is set, deletion
+     */
+    @VisibleForTesting
+    List<Object> orderResources(List<Object> resources) {
+        if (deleteResource) {
+            return ResourceOrdering.sortForDelete(resources);
+        }
+        return ResourceOrdering.sortForApply(resources);
     }
 
     /**
      * Get related updater in{@link ResourceUpdaterMap} by resource's class type and handle the resource by updater.
      *
+     * <p>Package private so tests can substitute it with a recording fake and verify the order
+     * in which resources are handed over, without constructing any {@link ApiClient} based
+     * updater or contacting a cluster.</p>
+     *
      * @param resource k8s resource
      */
-    private void handleResource(Object resource) {
+    @VisibleForTesting
+    void handleResource(Object resource) {
         Pair<Class<? extends ResourceManager>,
                 Class<? extends ResourceManager.ResourceUpdater>> updaterPair =
                 ResourceUpdaterMap.getUnmodifiableInstance().get(resource.getClass());
